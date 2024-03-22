@@ -1,0 +1,8 @@
+fn main(argc: int, argv: &char[]) int {
+	// I am a comment :D
+	for i := 0; i < argc; i++ {
+		printf("argnr {}: {}\n", i, argv[i]);
+	}
+
+	ret 0;
+}
