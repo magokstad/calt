@@ -1,4 +1,9 @@
-use chumsky::{error::Simple, primitive::just, select, Parser};
+use chumsky::{
+    error::Simple,
+    primitive::just,
+    recursive::{self, recursive},
+    select, Parser,
+};
 
 use crate::lexer::Token;
 
@@ -58,10 +63,12 @@ pub enum Type {
 pub fn parser() -> impl Parser<Token, Expr, Error = Simple<Token>> {
     let literal = select! {
         Token::IntLit(s) => Expr::IntLit(s),
-        Token::FloatLit(s) => Expr::FloatLit(s)
-        Token::FloatLit(s) => Expr::FloatLit(s)
-        Token::FloatLit(s) => Expr::FloatLit(s)
+        Token::FloatLit(s) => Expr::FloatLit(s),
+        Token::StringLit(s) => Expr::StringLit(s),
+        Token::CharLit(s) => Expr::CharLit(s)
     };
 
-    basics
+    let expr = recursive(|expr| literal);
+
+    expr
 }
