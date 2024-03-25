@@ -1,12 +1,40 @@
-use logos::Logos;
+use logos::{Lexer, Logos, Skip};
+
+#[derive(Default, Debug, Clone, PartialEq)]
+pub enum LexingError {
+    // InvalidInteger(String),
+    #[default]
+    UnknownSymbol,
+}
+
+fn update_extra(lex: &mut Lexer<Token>) {
+    let (_pf, pt, pl) = lex.extras.last().unwrap_or(&(0, 1, 1));
+    lex.extras.push((*pt, lex.span().end, pl + 1));
+}
+
+fn newline_callback(lex: &mut Lexer<Token>) -> Skip {
+    update_extra(lex);
+    Skip
+}
+
+fn comment_callback(lex: &mut Lexer<Token>) -> String {
+    update_extra(lex);
+    lex.slice().to_owned()
+}
 
 #[derive(Logos, Debug, PartialEq, Eq, Hash, Clone)]
-#[logos(skip r"[ \t\f\n]+")]
+#[logos(skip r"[ \t\f]+")]
+#[logos(error = LexingError)]
+#[logos(extras = Vec<(usize, usize, usize)>)]
 pub enum Token {
+    #[token("\n", newline_callback)]
+    Newline,
+
     #[token("=")]
     Equal,
     #[token(":=")]
     ColEqual,
+
     #[token("==")]
     EqualEqual,
     #[token("!=")]
@@ -19,6 +47,7 @@ pub enum Token {
     Less,
     #[token(">")]
     Greater,
+
     #[token("{")]
     LeftBrace,
     #[token("[")]
@@ -31,6 +60,7 @@ pub enum Token {
     RightBracket,
     #[token(")")]
     RightParen,
+
     #[token(":")]
     Colon,
     #[token(";")]
@@ -39,6 +69,7 @@ pub enum Token {
     Dot,
     #[token(",")]
     Comma,
+
     #[token("!")]
     Exclamation,
     #[token("?")]
@@ -55,19 +86,29 @@ pub enum Token {
     Minus,
     #[token("%")]
     Percent,
+
     #[token("++")]
     Increment,
     #[token("--")]
     Decrement,
+    #[token("+=")]
+    IncrementBy,
+    #[token("-=")]
+    DecrementBy,
 
     #[token("for")]
     For,
     #[token("while")]
     While,
+    #[token("if")]
+    If,
+    #[token("else")]
+    Else,
     #[token("struct")]
     Struct,
     #[token("enum")]
     Enum,
+    #[token("ifc")]
     #[token("interface")]
     Interface,
     #[token("fn")]
@@ -75,6 +116,7 @@ pub enum Token {
     #[token("ret")]
     Ret,
     #[token("tail")]
+    #[token("tfn")]
     Tail,
 
     #[token("null")]
@@ -86,9 +128,9 @@ pub enum Token {
     #[token("char")]
     Char,
 
-    #[regex(r"///.*\n", |lex| lex.slice().to_owned())]
+    #[regex(r"///.*\n", comment_callback)]
     DocString(String),
-    #[regex(r"//.*\n", |lex| lex.slice().to_owned())]
+    #[regex(r"//.*\n", comment_callback)]
     Comment(String),
 
     #[regex(r"[A-Za-z][A-Za-z0-9_]*", |lex| lex.slice().to_owned())]
