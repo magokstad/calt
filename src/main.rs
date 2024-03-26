@@ -1,3 +1,4 @@
+use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::Parser;
 use lexer::Token;
 use logos::Logos;
@@ -8,7 +9,8 @@ mod lexer;
 mod parser;
 
 fn main() {
-    let lex = Token::lexer(include_str!("../design/initial.calt"));
+    let src = include_str!("../design/initial.calt");
+    let lex = Token::lexer(src);
     let extras = lex.extras.clone();
     let tokens = lex
         .spanned()
@@ -31,10 +33,10 @@ fn main() {
             }
         })
         .collect::<Vec<Token>>();
-    // for res in lex {
-    //     println!("{res:?}");
-    // }
-    println!("Ok");
+
     let parse = parser::parser().parse(tokens);
-    println!("{:?}", parse);
+    match parse {
+        Ok(p) => println!("{:#?}", parse),
+        Err(e) => println!("{}", e),
+    };
 }

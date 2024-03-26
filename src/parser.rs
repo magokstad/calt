@@ -1,6 +1,13 @@
-use std::sync::Arc;
-
-use chumsky::{error::Simple, primitive::just, recursive::recursive, select, Parser};
+use chumsky::{
+    error::{Rich, Simple},
+    extra,
+    input::ValueInput,
+    primitive::just,
+    recursive::recursive,
+    select,
+    span::SimpleSpan,
+    IterParser, Parser,
+};
 
 use crate::lexer::Token;
 
@@ -150,7 +157,11 @@ pub enum Type {
 
 type UnaryTypeFn = fn(Box<Type>) -> Type;
 
-pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
+pub fn parser<'a, I>() -> impl Parser<'a, I, File, extra::Err<Rich<'a, Token<'a>>>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = SimpleSpan>,
+{
+    // pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
     let literal = select! {
         Token::IntLit(s) => Expr::IntLit(s),
         Token::FloatLit(s) => Expr::FloatLit(s),
@@ -211,19 +222,15 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
     // let typ = recursive(|_| {
     let refer = ref_type
         .repeated()
-        .then(base_type)
-        .foldr(|op, rhs| op(Box::new(rhs)));
+        .foldr(base_type, |op, rhs| op(Box::new(rhs)));
 
-    let array = refer
-        .then(
-            just(Token::LeftBracket)
-                .ignore_then(just(Token::RightBracket))
-                .repeated(),
-        )
-        .foldl(|typ, _| Type::Array(Box::new(typ)));
-
+    let array = refer.foldl(
+        just(Token::LeftBracket)
+            .ignore_then(just(Token::RightBracket))
+            .repeated(),
+        |typ, _| Type::Array(Box::new(typ)),
+    );
     // array
-
     // });
 
     // remove if changing typ to include more types
@@ -244,6 +251,7 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
             let stmt_list = stmt
                 .clone()
                 .separated_by(just(Token::SemiColon))
+                .collect::<Vec<_>>()
                 .delimited_by(just(Token::LeftBrace), just(Token::RightBrace));
 
             let subscription = expr
@@ -254,6 +262,7 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
             let func_call = expr
                 .clone()
                 .separated_by(just(Token::Comma))
+                .collect::<Vec<_>>()
                 .delimited_by(just(Token::LeftParen), just(Token::RightParen))
                 .map(|rs| Expr::FnCall {
                     expr: Box::new(Expr::ParserNone),
@@ -268,45 +277,45 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
             // C operator precedence:
             // https://en.cppreference.com/w/c/language/operator_precedence
 
-            let first = atom
-                .clone()
-                .then(member_access.or(func_call).or(subscription).repeated())
-                .foldl(|exp, firs| firs.replace_parse_temp(exp));
+            // TODO: With new parsers, this might be easier to do some other way w/o replace_parse_temp
+            let first = atom.clone().foldl(
+                member_access.or(func_call).or(subscription).repeated(),
+                |exp, firs| firs.replace_parse_temp(exp),
+            );
 
             let second = unary_op
                 .repeated()
-                .then(first.clone())
-                .foldr(|op, rhs| op(Box::new(rhs)));
+                .foldr(first.clone(), |op, rhs| op(Box::new(rhs)));
 
-            let third = second
-                .clone()
-                .then(bin_op_strong.then(second.clone()).repeated())
-                .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
+            let third = second.clone().foldl(
+                bin_op_strong.then(second.clone()).repeated(),
+                |lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)),
+            );
 
-            let fourth = third
-                .clone()
-                .then(bin_op_weak.then(third.clone()).repeated())
-                .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
+            let fourth = third.clone().foldl(
+                bin_op_weak.then(third.clone()).repeated(),
+                |lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)),
+            );
 
             // skipping fifth for now
             let fifth = fourth;
 
-            let sixth = fifth
-                .clone()
-                .then(comp_strong.then(fifth.clone()).repeated())
-                .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
+            let sixth = fifth.clone().foldl(
+                comp_strong.then(fifth.clone()).repeated(),
+                |lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)),
+            );
 
-            let seventh = sixth
-                .clone()
-                .then(comp_weak.then(sixth.clone()).repeated())
-                .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
+            let seventh = sixth.clone().foldl(
+                comp_weak.then(sixth.clone()).repeated(),
+                |lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)),
+            );
 
             // skipping to thirteenth
             let thirteenth = seventh.clone();
-            let fourteenth = thirteenth
-                .clone()
-                .then(assign.then(thirteenth.clone()).or_not())
-                .foldl(|lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)));
+            let fourteenth = thirteenth.clone().foldl(
+                assign.then(thirteenth.clone()).repeated(),
+                |lhs, (op, rhs)| op(Box::new(lhs), Box::new(rhs)),
+            );
 
             let iff = just(Token::If)
                 .ignore_then(expr.clone())
@@ -316,7 +325,8 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
                         .ignore_then(just(Token::If))
                         .ignore_then(expr.clone())
                         .then(stmt_list.clone())
-                        .repeated(),
+                        .repeated()
+                        .collect::<Vec<_>>(),
                 )
                 .then(just(Token::Else).ignore_then(stmt_list.clone()).or_not())
                 .map(|(((exp, l1), l2a), ol3)| Expr::If {
@@ -325,7 +335,7 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
                     elsee: ol3.unwrap_or(vec![]),
                 });
 
-            fourteenth.or(iff)
+            fourteenth //.or(iff)
         });
         // Hack to get expr in outer scope
         expr_maybe = Some(expr.clone());
@@ -333,6 +343,7 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
         let expr_stmt = expr
             .clone()
             .separated_by(just(Token::Comma))
+            .collect::<Vec<_>>()
             .map(|e| Stmt::ExprStmt(e));
 
         let var_decl = name
@@ -349,7 +360,11 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
                 .then(expr.clone())
                 .then_ignore(just(Token::SemiColon))
                 .then(expr_stmt.clone())
-                .then(stmt.clone().separated_by(just(Token::SemiColon)))
+                .then(
+                    stmt.clone()
+                        .separated_by(just(Token::SemiColon))
+                        .collect::<Vec<_>>(),
+                )
                 .map(|(((i, c), a), b)| Stmt::ForStmt {
                     init: Box::new(i),
                     cond: Box::new(c),
@@ -358,8 +373,8 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
                 })
         };
 
-        for_stmt
-        // .or(var_decl).or(expr_stmt)
+        var_decl.or(expr_stmt)
+        // .or(for_stmt)
     });
     // Hack to get expr in this scope
     let expr = expr_maybe.unwrap();
@@ -367,7 +382,8 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
     let name_type_list = name
         .then_ignore(just(Token::Colon))
         .then(typ.clone())
-        .separated_by(just(Token::Comma));
+        .separated_by(just(Token::Comma))
+        .collect::<Vec<_>>();
 
     let fn_def = just(Token::Fn)
         .ignore_then(name)
@@ -380,6 +396,7 @@ pub fn parser() -> impl Parser<Token, File, Error = Simple<Token>> {
         .then(
             stmt.clone()
                 .separated_by(just(Token::SemiColon))
+                .collect::<Vec<_>>()
                 .delimited_by(just(Token::LeftBrace), just(Token::RightBrace)),
         )
         .map(|(((name, args), ret), body)| OuterStmt::FnDef {
