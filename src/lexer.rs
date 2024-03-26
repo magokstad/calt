@@ -17,9 +17,10 @@ fn newline_callback(lex: &mut Lexer<Token>) -> Skip {
     Skip
 }
 
-fn comment_callback(lex: &mut Lexer<Token>) -> String {
+fn comment_callback(lex: &mut Lexer<Token>) -> Skip {
     update_extra(lex);
-    lex.slice().to_owned()
+    lex.slice().to_owned();
+    Skip
 }
 
 #[derive(Logos, Debug, PartialEq, Eq, Hash, Clone)]
@@ -125,14 +126,17 @@ pub enum Token {
     Void,
     #[token("int")]
     Int,
+    #[token("float")]
+    Float,
     #[token("char")]
     Char,
 
     #[regex(r"///.*\n", comment_callback)]
-    DocString(String),
+    DocString,
+    // DocString(String),
     #[regex(r"//.*\n", comment_callback)]
-    Comment(String),
-
+    Comment,
+    // Comment(String),
     #[regex(r"[A-Za-z][A-Za-z0-9_]*", |lex| lex.slice().to_owned())]
     Name(String),
 

@@ -1,10 +1,11 @@
-((1+2*3)[4][5]å)
-
 fn main(argc: int, argv: &char[]) int {
 	// I am a comment :D
 	for i := 0; i < argc; i++ {
 		printf("argnr {}: {}\n", i, argv[i]);
 	}
 
-	ret 0;
+	// x := 3;
+	// y := 4;
+
+	// ret y*y + 3x + 9;
 }
