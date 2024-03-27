@@ -1,9 +1,10 @@
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use chumsky::Parser;
+use chumsky::{
+    input::{Input, Stream},
+    Parser,
+};
 use lexer::Token;
 use logos::Logos;
-
-use crate::lexer::LexingError;
 
 mod lexer;
 mod parser;
@@ -11,32 +12,29 @@ mod parser;
 fn main() {
     let src = include_str!("../design/initial.calt");
     let lex = Token::lexer(src);
-    let extras = lex.extras.clone();
-    let tokens = lex
-        .spanned()
-        .filter_map(|(t, s)| match t {
-            Ok(t) => Some(t),
-            Err(e) => {
-                let mut line = 0;
-                for i in &extras {
-                    if i.0 >= s.start && i.1 < s.end {
-                        line = i.2;
-                        break;
-                    }
-                }
-                match e {
-                    LexingError::UnknownSymbol => {
-                        println!("Unknown Symbol at {}:{}", line, s.start)
-                    }
-                };
-                None
-            }
-        })
-        .collect::<Vec<Token>>();
+    let token_iter = lex.spanned().map(|(tok, span)| match tok {
+        Ok(tok) => (tok, span.into()),
+        Err(_) => (Token::Error("generic"), span.into()),
+    });
 
-    let parse = parser::parser().parse(tokens);
+    let token_stream = Stream::from_iter(token_iter).spanned((src.len()..src.len()).into());
+    let parse = parser::parser().parse(token_stream).into_result();
     match parse {
-        Ok(p) => println!("{:#?}", parse),
-        Err(e) => println!("{}", e),
+        Ok(p) => println!("{:#?}", p),
+        Err(errs) => {
+            for err in errs {
+                Report::build(ReportKind::Error, (), err.span().start)
+                    .with_code(3)
+                    .with_message(err.to_string())
+                    .with_label(
+                        Label::new(err.span().into_range())
+                            .with_message(err.reason().to_string())
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .eprint(Source::from(src))
+                    .unwrap();
+            }
+        }
     };
 }

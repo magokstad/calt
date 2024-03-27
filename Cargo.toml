@@ -9,5 +9,5 @@ edition = "2021"
 ariadne = "0.4.0"
 # chumsky = "0.9.3"
 logos = "0.14.0"
-chumsky = { git = "https://github.com/zesterer/chumsky.git", branch = "main" }
+chumsky = { git = "https://github.com/zesterer/chumsky.git", branch = "main", features = ["label", "pratt"]}
 
