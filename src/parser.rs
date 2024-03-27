@@ -1,10 +1,10 @@
 use chumsky::{
     error::Rich,
     extra,
-    input::{Input, InputRef, ValueInput},
-    pratt::{infix, left, postfix, prefix},
+    input::ValueInput,
+    pratt::{infix, left, prefix},
     primitive::{choice, just},
-    recursive::{self, recursive, Recursive},
+    recursive::{recursive, Recursive},
     select,
     span::SimpleSpan,
     IterParser, Parser,
@@ -14,8 +14,8 @@ use crate::lexer::Token;
 
 #[derive(Clone, Debug)]
 pub struct File {
-    includes: Vec<Include>,
-    stmts: Vec<OuterStmt>,
+    pub includes: Vec<Include>,
+    pub stmts: Vec<OuterStmt>,
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +46,7 @@ pub enum OuterStmt {
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
+    Empty,
     ForStmt {
         init: Box<Stmt>,
         cond: Box<Expr>,
@@ -363,7 +364,6 @@ where
         .labelled("var_decl")
         .as_context();
 
-    // WARN: COULD BE INFINITE???
     let decl_list = var_decl
         .clone()
         .separated_by(just(Token::Comma))
@@ -372,6 +372,7 @@ where
         .labelled("decl_list")
         .as_context();
 
+    // WARN: COULD BE INFINITE???
     let stmt_list = pure_stmt
         .clone()
         .separated_by(just(Token::Comma))
@@ -411,10 +412,8 @@ where
             .or(var_decl.then_ignore(just(Token::SemiColon)))
             .or(expr_stmt.then_ignore(just(Token::SemiColon))),
     );
-    // .recover_with(var_decl)
-    // choice((for_stmt, expr_stmt, var_decl))
 
-    stmt
+    stmt.clone().then_ignore(just(Token::SemiColon).repeated())
 }
 
 pub fn parser<'a, I>() -> impl Parser<'a, I, File, extra::Err<Rich<'a, Token<'a>>>> + Clone
