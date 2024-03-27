@@ -6,8 +6,8 @@ fn main(argc: int, argv: &char[]) int {
 		printf("argnr {}: {}\n", i, argv[i]);
 	}
 
-	// x := 3;
-	// y := 4;
+	x := 3;
+	y := 4;
 
-	// ret y*y + 3x + 9;
+	ret y*y + 3x + 9;
 }
