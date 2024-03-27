@@ -9,5 +9,5 @@ fn main(argc: int, argv: &char[]) int {
 	x := 3;
 	y := 4;
 
-	ret y*y + 3x + 9;
+	ret y*y + 3*x + 9;
 }

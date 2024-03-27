@@ -1,10 +1,10 @@
 use chumsky::{
     error::Rich,
     extra,
-    input::{Input, ValueInput},
+    input::{Input, InputRef, ValueInput},
     pratt::{infix, left, postfix, prefix},
     primitive::{choice, just},
-    recursive::{recursive, Recursive},
+    recursive::{self, recursive, Recursive},
     select,
     span::SimpleSpan,
     IterParser, Parser,
@@ -345,68 +345,74 @@ where
     .labelled("expr")
     .as_context();
 
-    stmt.define({
-        let expr_stmt = expr
-            .clone()
-            // .then_ignore(just(Token::SemiColon))
-            .map(|e| Stmt::ExprStmt(Box::new(e)))
-            .labelled("expr_stmt")
-            .as_context();
+    let mut pure_stmt = Recursive::declare();
 
-        let var_decl = name
-            .then(just(Token::Colon).ignore_then(type_parser()).or_not())
-            .then_ignore(just(Token::ColEqual))
-            .then(expr.clone())
-            // .then_ignore(just(Token::SemiColon))
-            .map(|((name, typ), expr)| Stmt::VarDecl { name, typ, expr })
-            .labelled("var_decl")
-            .as_context();
+    let expr_stmt = expr
+        .clone()
+        // .then_ignore(just(Token::SemiColon))
+        .map(|e| Stmt::ExprStmt(Box::new(e)))
+        .labelled("expr_stmt")
+        .as_context();
 
-        // WARN: COULD BE INFINITE???
-        let decl_list = var_decl
-            .clone()
-            .separated_by(just(Token::Comma))
-            .collect::<Vec<_>>()
-            .map(Stmt::StmtList)
-            .labelled("decl_list")
-            .as_context();
+    let var_decl = name
+        .then(just(Token::Colon).ignore_then(type_parser()).or_not())
+        .then_ignore(just(Token::ColEqual))
+        .then(expr.clone())
+        // .then_ignore(just(Token::SemiColon))
+        .map(|((name, typ), expr)| Stmt::VarDecl { name, typ, expr })
+        .labelled("var_decl")
+        .as_context();
 
-        let stmt_list = stmt
-            .clone()
-            .separated_by(just(Token::Comma))
-            .collect::<Vec<_>>()
-            .map(Stmt::StmtList)
-            .labelled("stmt_list")
-            .as_context();
+    // WARN: COULD BE INFINITE???
+    let decl_list = var_decl
+        .clone()
+        .separated_by(just(Token::Comma))
+        .collect::<Vec<_>>()
+        .map(Stmt::StmtList)
+        .labelled("decl_list")
+        .as_context();
 
-        let for_stmt = just(Token::For)
-            .ignore_then(decl_list.clone())
-            .then_ignore(just(Token::SemiColon))
-            .then(expr.clone())
-            .then_ignore(just(Token::SemiColon))
-            .then(stmt_list.clone())
-            .then(
-                stmt.clone()
-                    .then_ignore(just(Token::SemiColon))
-                    .repeated()
-                    // .separated_by(just(Token::SemiColon))
-                    // .allow_trailing()
-                    .collect::<Vec<_>>()
-                    .delimited_by(just(Token::LeftBrace), just(Token::RightBrace)),
-            )
-            .map(|(((i, c), a), b)| Stmt::ForStmt {
-                init: Box::new(i),
-                cond: Box::new(c),
-                after: Box::new(a),
-                body: b,
-            })
-            .labelled("for_stmt")
-            .as_context();
+    let stmt_list = pure_stmt
+        .clone()
+        .separated_by(just(Token::Comma))
+        .collect::<Vec<_>>()
+        .map(Stmt::StmtList)
+        .labelled("stmt_list")
+        .as_context();
 
-        for_stmt.or(var_decl).or(expr_stmt)
-        // .recover_with(var_decl)
-        // choice((for_stmt, expr_stmt, var_decl))
-    });
+    let for_stmt = just(Token::For)
+        .ignore_then(decl_list.clone())
+        .then_ignore(just(Token::SemiColon))
+        .then(expr.clone())
+        .then_ignore(just(Token::SemiColon))
+        .then(stmt_list.clone())
+        .then(
+            stmt.clone()
+                // .then_ignore(just(Token::SemiColon))
+                .repeated()
+                // .separated_by(just(Token::SemiColon))
+                // .allow_trailing()
+                .collect::<Vec<_>>()
+                .delimited_by(just(Token::LeftBrace), just(Token::RightBrace)),
+        )
+        .map(|(((i, c), a), b)| Stmt::ForStmt {
+            init: Box::new(i),
+            cond: Box::new(c),
+            after: Box::new(a),
+            body: b,
+        })
+        .labelled("for_stmt")
+        .as_context();
+
+    pure_stmt.define(for_stmt.clone().or(var_decl.clone()).or(expr_stmt.clone()));
+
+    stmt.define(
+        for_stmt
+            .or(var_decl.then_ignore(just(Token::SemiColon)))
+            .or(expr_stmt.then_ignore(just(Token::SemiColon))),
+    );
+    // .recover_with(var_decl)
+    // choice((for_stmt, expr_stmt, var_decl))
 
     stmt
 }
@@ -433,7 +439,8 @@ where
         .then(type_parser())
         .then(
             stmt_parser()
-                .separated_by(just(Token::SemiColon))
+                .repeated()
+                // .separated_by(just(Token::SemiColon))
                 .collect::<Vec<_>>()
                 .delimited_by(just(Token::LeftBrace), just(Token::RightBrace)),
         )
