@@ -1,4 +1,4 @@
-use ariadne::{Color, Label, Report, ReportKind, Source, Span};
+use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::{
     input::{Input, Stream},
     Parser,
@@ -6,10 +6,10 @@ use chumsky::{
 use lexer::Token;
 use logos::Logos;
 
-// mod codegen;
+mod codegen;
 mod lexer;
 mod parser;
-// mod semantic_analysis;
+mod semantic_analysis;
 
 fn main() {
     let src = include_str!("../design/initial.calt");

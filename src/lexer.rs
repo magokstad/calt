@@ -21,7 +21,7 @@ fn newline_callback<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Skip {
 
 fn comment_callback<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Skip {
     update_extra(lex);
-    lex.slice().to_owned();
+    let _ = lex.slice().to_owned();
     Skip
 }
 
@@ -123,6 +123,8 @@ pub enum Token<'a> {
     #[token("tail")]
     #[token("tfn")]
     Tail,
+    #[token("global")]
+    Global,
 
     #[token("null")]
     Null,
@@ -215,6 +217,7 @@ impl<'a> fmt::Display for Token<'a> {
             Token::IntLit(s) => write!(f, "{s}"),
             Token::StringLit(s) => write!(f, "{s}"),
             Token::CharLit(s) => write!(f, "{s}"),
+            Token::Global => write!(f, "global"),
         }
     }
 }

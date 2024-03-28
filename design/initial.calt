@@ -6,7 +6,6 @@ fn main(argc: int, argv: &char[]) int {
 		printf("argnr {}: {}\n", i, argv[i]);
 	}
 
-	å = 3;
 	x := 3;
 	y := 4;
 	x: int := 3;

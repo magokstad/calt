@@ -46,18 +46,18 @@ pub enum OuterStmt {
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
-    Empty,
+    // Empty,
     ForStmt {
         init: Box<Stmt>,
         cond: Box<Expr>,
         after: Box<Stmt>,
         body: Vec<Stmt>,
     },
-    WhileStmt {
-        cond: Box<Expr>,
-        body: Vec<Stmt>,
-    },
-    ExprStmt(Box<Expr>),
+    // WhileStmt {
+    //     cond: Box<Expr>,
+    //     body: Vec<Stmt>,
+    // },
+    ExprStmt(Expr),
     StmtList(Vec<Stmt>),
     VarDecl {
         name: String,
@@ -103,11 +103,9 @@ pub enum Expr {
     Index(Box<Expr>, Box<Expr>),
     Assign(Box<Expr>, Box<Expr>),
 
-    Break,
-    Continue,
-
+    // Break,
+    // Continue,
     Ret(Box<Expr>),
-
     FnCall {
         expr: Box<Expr>,
         args: Vec<Box<Expr>>,
@@ -200,7 +198,7 @@ where
     typ
 }
 
-pub fn stmt_parser<'a, I>() -> impl Parser<'a, I, Stmt, extra::Err<Rich<'a, Token<'a>>>> + Clone
+pub fn parser<'a, I>() -> impl Parser<'a, I, File, extra::Err<Rich<'a, Token<'a>>>> + Clone
 where
     I: ValueInput<'a, Token = Token<'a>, Span = SimpleSpan>,
 {
@@ -266,7 +264,7 @@ where
         let inner = expr
             .clone()
             .delimited_by(just(Token::LeftParen), just(Token::RightParen));
-        let ret = just(Token::Ret).ignore_then(expr.clone());
+        let ret = just(Token::Ret).ignore_then(expr.clone().map(|x| Expr::Ret(Box::new(x))));
 
         let atom = literal.or(var).or(null).or(ret).or(inner);
 
@@ -351,7 +349,7 @@ where
     let expr_stmt = expr
         .clone()
         // .then_ignore(just(Token::SemiColon))
-        .map(|e| Stmt::ExprStmt(Box::new(e)))
+        .map(|e| Stmt::ExprStmt(e))
         .labelled("expr_stmt")
         .as_context();
 
@@ -410,16 +408,10 @@ where
     stmt.define(
         for_stmt
             .or(var_decl.then_ignore(just(Token::SemiColon)))
-            .or(expr_stmt.then_ignore(just(Token::SemiColon))),
+            .or(expr_stmt.then_ignore(just(Token::SemiColon)))
+            .then_ignore(just(Token::SemiColon).repeated()),
     );
 
-    stmt.clone().then_ignore(just(Token::SemiColon).repeated())
-}
-
-pub fn parser<'a, I>() -> impl Parser<'a, I, File, extra::Err<Rich<'a, Token<'a>>>> + Clone
-where
-    I: ValueInput<'a, Token = Token<'a>, Span = SimpleSpan>,
-{
     let name = select! {Token::Name(n) => n}.labelled("name");
 
     let name_type_list = name
@@ -437,7 +429,7 @@ where
         )
         .then(type_parser())
         .then(
-            stmt_parser()
+            stmt.clone()
                 .repeated()
                 // .separated_by(just(Token::SemiColon))
                 .collect::<Vec<_>>()
@@ -452,17 +444,25 @@ where
         .labelled("fn_def")
         .as_context();
 
+    // let global = just(Token::Global).ignore_then(var_decl).map(|x| OuterStmt::GlobalVarDecl { name: , typ: , expr:  });
+    let global = just(Token::Global)
+        .ignore_then(name)
+        .then(just(Token::Colon).ignore_then(type_parser()).or_not())
+        .then_ignore(just(Token::ColEqual))
+        .then(expr.clone())
+        // .then_ignore(just(Token::SemiColon))
+        .map(|((name, typ), expr)| OuterStmt::GlobalVarDecl { name, typ, expr })
+        .labelled("global_var_decl")
+        .as_context();
+
+    // TODO: structs
+    // let structt = ...
+
+    let stmts = global.or(fn_def).repeated().collect::<Vec<_>>();
+
     // Temporary
-    fn_def.map(|f| File {
+    stmts.map(|s| File {
         includes: vec![],
-        stmts: vec![
-            // OuterStmt::
-            f,
-            // OuterStmt::GlobalVarDecl {
-            //     name: "asd".to_string(),
-            //     typ: None,
-            //     expr: f,
-            // },
-        ],
+        stmts: s,
     })
 }
