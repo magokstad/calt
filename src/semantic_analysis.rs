@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, ops::Add};
+use std::{ collections::HashMap, fmt::Display, ops::Add};
 
 use chumsky::container::Container;
 
@@ -7,11 +7,17 @@ use crate::parser::{Expr, File, OuterStmt, Stmt, Type};
 #[derive(Debug)]
 pub enum SemanticErrorType {
     UndefinedVariable(String),
-    TypeMismatch { expected: String, found: String },
-    TypeConflict { lhs: String, rhs: String },
     Redeclaration(String),
+
+    // Same????
+    TypeMismatch { expected: SymbolType, found: SymbolType },
+    TypeConflict { lhs: SymbolType, rhs: SymbolType },
+
     InvalidFunctionCall { name: String, reason: String },
-    // InvalidIndexation { name: String, reason: String },
+    InvalidAssignmentLhs(SymbolType), 
+    InvalidDeref(SymbolType),
+    InvalidIndexation(SymbolType),
+    InvalidType { expected_one_of: Vec<SymbolType>, found: SymbolType },
 }
 
 #[derive(Debug)]
@@ -28,6 +34,8 @@ pub enum SymbolType {
     Float,
     Char,
     Void,
+    // Inferred,
+    Variadic,
     Pointer(Box<SymbolType>),
     Array(Box<SymbolType>),
     Function {
@@ -48,6 +56,7 @@ impl Display for SymbolType {
             SymbolType::Void => write!(f, "void"),
             SymbolType::Pointer(t) => write!(f, "&{}", t),
             SymbolType::Array(t) => write!(f, "{}[]", t),
+            SymbolType::Variadic => write!(f, " . . . "),
             SymbolType::Function { args, ret } => write!(
                 f,
                 "fn({}){}",
@@ -80,6 +89,14 @@ pub struct Symbol {
 }
 
 impl Symbol {
+
+    pub fn new(st: SymbolType, n: String) -> Self {
+        Self {
+            name: n,
+            typ: st
+        }
+    }
+    
     pub fn from_type(t: Type, n: String) -> Self {
         Self {
             name: n,
@@ -121,7 +138,7 @@ impl<'a> SymbolTable<'a> {
     pub fn get(&self, name: &String) -> Result<&Symbol, SemanticError> {
         if let Some(s) = self.symbols.get(name) {
             Ok(s)
-        } else if let Some(p) = self.parent {
+        } else if let Some(p) = self.parent.as_ref() {
             p.get(name)
         } else {
             Err(SemanticError {
@@ -130,8 +147,8 @@ impl<'a> SymbolTable<'a> {
         }
     }
 
-    pub fn add(&mut self, entry: (String, Symbol)) {
-        self.symbols.push(entry);
+    pub fn add(&mut self, symbol: Symbol) {
+        self.symbols.push((symbol.name.to_owned(), symbol));
     }
 }
 
@@ -184,7 +201,7 @@ impl Analyzable for OuterStmt {
 
                 let mut func_symbs = SymbolTable::new_child_of(symbs);
                 args.into_iter().for_each(|(s, t)| {
-                    func_symbs.add((s.clone(), Symbol::from_type(t.clone(), s.clone())))
+                    func_symbs.add(Symbol::from_type(t.clone(), s.clone()))
                 });
                 body.into_iter().for_each(|s| {
                     if let Stmt::ExprStmt(Expr::Ret(r)) = s {
@@ -211,30 +228,115 @@ impl Analyzable for OuterStmt {
 
 impl Analyzable for Stmt {
     fn analyze(&mut self, symbs: &mut SymbolTable) -> Result<(), Vec<SemanticError>> {
+        let mut errs = vec![];
         match self {
             Stmt::ForStmt {
                 init,
                 cond,
                 after,
                 body,
-            } => todo!(),
-            Stmt::ExprStmt(_) => todo!(),
-            Stmt::StmtList(_) => todo!(),
-            Stmt::VarDecl { name, typ, expr } => todo!(),
+            } => {
+                let mut for_symbs = SymbolTable::new_child_of(symbs);
+                // FIXME: Very repetitive, these could probably be made into functions
+                if let Err(mut es) = init.analyze(&mut for_symbs) {
+                    errs.append(&mut es);
+                }
+                if let Err(mut es) = cond.analyze(&mut for_symbs) {
+                    errs.append(&mut es);
+                }
+                if let Err(mut es) = after.analyze(&mut for_symbs) {
+                    errs.append(&mut es);
+                }
+                for stmt in body {
+                    if let Err(mut es) = stmt.analyze(&mut for_symbs) {
+                        errs.append(&mut es);
+                    }
+                }
+                // FIXME: that includes this guy (repetitive)
+                if errs.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errs)
+                }
+
+            },
+            Stmt::ExprStmt(e) => e.analyze(symbs),
+            Stmt::StmtList(stms) => {
+            let x =  stms.into_iter()
+                .map(|s| match s.analyze(symbs) {
+                    Ok(()) => vec![],
+                    Err(e) => e
+                })
+                .flatten().collect::<Vec<_>>();
+                if x.is_empty() {
+                    Ok(())
+                } else {
+                    Err(x)
+                }
+            }
+            Stmt::VarDecl { name, typ, expr } => {
+                if symbs.has(name) {
+                    errs.push(SemanticError { typ: SemanticErrorType::Redeclaration(name.to_owned()) });
+                }
+                if let Err(mut es) = expr.analyze(symbs) {
+                    errs.append(&mut es);
+                    // Return early, rest is VERY dependant on expr's type
+                } else {
+                    let rtyp = expr.get_type(symbs).unwrap();
+                    let expected = match typ {
+                        Some(t) => SymbolType::from(t.to_owned()),
+                        None => rtyp.clone(),
+                    };
+                    if expected != expr.get_type(symbs).unwrap() {
+                        errs.push(SemanticError { typ: SemanticErrorType::TypeMismatch { expected: expected.to_owned(), found: rtyp }})
+                    }
+                    symbs.add(Symbol::new(expected, name.to_owned()))
+                }
+                if errs.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errs)
+                }
+            }
         }
     }
 }
 
 impl Analyzable for Expr {
     fn analyze(&mut self, symbs: &mut SymbolTable) -> Result<(), Vec<SemanticError>> {
+        if let Err(e) = self.get_type(symbs) {
+            return Err(vec![e]);
+        }
+        let typ = self.get_type(symbs).unwrap();
         match self {
             // TODO: check types are correct recursively through "get_type"
-            Expr::ParserNone => todo!(),
-            Expr::IntLit(_)
+            Expr::ParserNone
+            | Expr::IntLit(_)
             | Expr::FloatLit(_)
             | Expr::StringLit(_)
             | Expr::CharLit(_)
-            | Expr::Null => Ok(()),
+            | Expr::Null
+            | Expr::Neg(_)
+            | Expr::Inc(_)
+            | Expr::Dec(_)
+            | Expr::Add(_, _)
+            | Expr::Sub(_, _)
+            | Expr::Mult(_, _)
+            | Expr::Div(_, _)
+            | Expr::Mod(_, _)
+            | Expr::Gt(_, _)
+            | Expr::Lt(_, _)
+            | Expr::Eq(_, _)
+            | Expr::Neq(_, _)
+            | Expr::Geq(_, _)
+            | Expr::Leq(_, _)
+            // TODO: aanythign more for reffing / dereffing and gang???
+            | Expr::FnCall { .. }
+            | Expr::Ret(_) 
+            | Expr::Index(_, _)
+            | Expr::Assign(_, _)
+            | Expr::Ref(_)
+            | Expr::Deref(_) => Ok(()),
             Expr::Var(n) => {
                 if symbs.has(n) {
                     Ok(())
@@ -244,26 +346,6 @@ impl Analyzable for Expr {
                     }])
                 }
             }
-            Expr::Neg(_) => todo!(),
-            Expr::Ref(_) => todo!(),
-            Expr::Deref(_) => todo!(),
-            Expr::Inc(_) => todo!(),
-            Expr::Dec(_) => todo!(),
-            Expr::Add(_, _) => todo!(),
-            Expr::Sub(_, _) => todo!(),
-            Expr::Mult(_, _) => todo!(),
-            Expr::Div(_, _) => todo!(),
-            Expr::Mod(_, _) => todo!(),
-            Expr::Gt(_, _) => todo!(),
-            Expr::Lt(_, _) => todo!(),
-            Expr::Eq(_, _) => todo!(),
-            Expr::Neq(_, _) => todo!(),
-            Expr::Geq(_, _) => todo!(),
-            Expr::Leq(_, _) => todo!(),
-            Expr::Index(_, _) => todo!(),
-            Expr::Assign(_, _) => todo!(),
-            Expr::Ret(_) => todo!(),
-            Expr::FnCall { expr, args } => todo!(),
             Expr::Member { expr, name } => todo!(),
             Expr::If {
                 iff,
@@ -278,7 +360,7 @@ impl Expr {
     // TODO: recursively check types
     pub fn get_type(&self, symbs: &SymbolTable) -> Result<SymbolType, SemanticError> {
         match self {
-            Expr::ParserNone => todo!(),
+            Expr::ParserNone => Ok(SymbolType::Void),
             // Err(SemanticError { typ: SemanticErrorType::TypeMismatch { expected: , found:  } }),
             Expr::IntLit(_) => Ok(SymbolType::Integer),
             Expr::FloatLit(_) => Ok(SymbolType::Float),
@@ -296,11 +378,11 @@ impl Expr {
                 | SymbolType::Array(_)
                 | SymbolType::Function { .. }
                 | SymbolType::Void
+                // TODO: Is this right?
+                // | SymbolType::Inferred
+                | SymbolType::Variadic
                 | SymbolType::Pointer(_) => Err(SemanticError {
-                    typ: SemanticErrorType::TypeMismatch {
-                        expected: "Integer or Float".to_string(),
-                        found: e.get_type(symbs)?.to_string(),
-                    },
+                    typ: SemanticErrorType::InvalidType { expected_one_of: vec![SymbolType::Integer, SymbolType::Float], found: e.get_type(symbs)? }
                 }),
             },
             Expr::Ref(e) => Ok(SymbolType::Pointer(Box::new(e.get_type(symbs)?))),
@@ -309,10 +391,7 @@ impl Expr {
                     Ok(i.get_type(symbs)?)
                 } else {
                     Err(SemanticError {
-                        typ: SemanticErrorType::TypeMismatch {
-                            expected: "Pointer".to_string(),
-                            found: e.get_type(symbs)?.to_string(),
-                        },
+                        typ: SemanticErrorType::InvalidDeref(e.get_type(symbs)?)
                     })
                 }
             }
@@ -324,27 +403,17 @@ impl Expr {
                 let (lt, rt) = (l.get_type(symbs)?, r.get_type(symbs)?);
                 if lt != SymbolType::Integer || lt != SymbolType::Float {
                     Err(SemanticError {
-                        typ: SemanticErrorType::TypeMismatch {
-                            expected: SymbolType::Integer.to_string()
-                                + " or "
-                                + SymbolType::Float.to_string().as_str(),
-                            found: lt.to_string(),
-                        },
+                        typ: SemanticErrorType::InvalidType { expected_one_of: vec![SymbolType::Integer, SymbolType::Float], found: lt } 
                     })
                 } else if rt != SymbolType::Integer || rt != SymbolType::Float {
                     Err(SemanticError {
-                        typ: SemanticErrorType::TypeMismatch {
-                            expected: SymbolType::Integer.to_string()
-                                + " or "
-                                + SymbolType::Float.to_string().as_str(),
-                            found: rt.to_string(),
-                        },
+                        typ: SemanticErrorType::InvalidType { expected_one_of: vec![SymbolType::Integer, SymbolType::Float], found: lt } 
                     })
                 } else if rt != lt {
                     Err(SemanticError {
                         typ: SemanticErrorType::TypeConflict {
-                            lhs: lt.to_string(),
-                            rhs: rt.to_string(),
+                            lhs: lt,
+                            rhs: rt,
                         },
                     })
                 } else {
@@ -363,8 +432,8 @@ impl Expr {
                 if rt != lt {
                     Err(SemanticError {
                         typ: SemanticErrorType::TypeConflict {
-                            lhs: lt.to_string(),
-                            rhs: rt.to_string(),
+                            lhs: lt,
+                            rhs: rt,
                         },
                     })
                 } else {
@@ -372,6 +441,7 @@ impl Expr {
                 }
             }
             // TODO: "un-indentify" this, wtf happened here?
+            // TODO: What about inner indexes and
             Expr::Index(e, i) => {
                 if let Expr::Var(s) = *e.clone() {
                     match symbs.get(&s) {
@@ -383,46 +453,94 @@ impl Expr {
                                 } else {
                                     Err(SemanticError {
                                         typ: SemanticErrorType::TypeMismatch {
-                                            expected: SymbolType::Integer.to_string(),
-                                            found: i.get_type(symbs)?.to_string(),
+                                            expected: SymbolType::Integer,
+                                            found: i.get_type(symbs)?,
                                         },
                                     })
                                 }
                             } else {
                                 Err(SemanticError {
-                                    typ: SemanticErrorType::TypeMismatch {
-                                        expected: "Array".to_string(),
-                                        found: e.get_type(symbs)?.to_string(),
-                                    },
+                                    typ: SemanticErrorType::InvalidIndexation(e.get_type(symbs)?) 
                                 })
                             }
                         }
                         Err(e) => Err(e),
                     }
                 } else {
-                    Err(SemanticError {
-                        typ: SemanticErrorType::TypeMismatch {
-                            expected: "Array".to_string(),
-                            found: e.get_type(symbs)?.to_string(),
-                        },
-                    })
+                                Err(SemanticError {
+                                    typ: SemanticErrorType::InvalidIndexation(e.get_type(symbs)?) 
+                                })
                 }
             }
-            Expr::Assign(v, e) => if let Expr::Var symbs.get(v.),
+            Expr::Assign(v, e) => match *v.clone() {
+                Expr::ParserNone
+                | Expr::IntLit(_)
+                | Expr::FloatLit(_)
+                | Expr::StringLit(_)
+                | Expr::CharLit(_)
+                | Expr::Null
+                | Expr::Neg(_)
+                | Expr::Ref(_)
+                | Expr::Deref(_)
+                | Expr::Inc(_)
+                | Expr::Dec(_)
+                | Expr::Add(_, _)
+                | Expr::Sub(_, _)
+                | Expr::Mult(_, _)
+                | Expr::Div(_, _)
+                | Expr::Mod(_, _)
+                | Expr::Gt(_, _)
+                | Expr::Lt(_, _)
+                | Expr::Eq(_, _)
+                | Expr::Neq(_, _)
+                | Expr::Geq(_, _)
+                | Expr::Leq(_, _)
+                | Expr::Ret(_)
+                | Expr::FnCall { .. }
+                | Expr::Assign(_, _)
+                | Expr::If { .. } => Err(SemanticError {
+                    typ: SemanticErrorType::InvalidIndexation(v.get_type(symbs)?)
+                }),
+                Expr::Member { .. } | Expr::Index(_, _) | Expr::Var(_) => {
+                    let (lt, rt) = (v.get_type(symbs)?, e.get_type(symbs)?);
+                    if lt == rt {
+                        Ok(lt)
+                    } else {
+                        Err(SemanticError {
+                            typ: SemanticErrorType::TypeMismatch {
+                                expected: lt,
+                                found: rt,
+                            },
+                        })
+                    }
+                }
+            },
             Expr::Ret(i) => Ok(i.get_type(symbs)?),
-            Expr::FnCall { expr, args } => todo!(),
+            Expr::FnCall { expr, args } => expr.get_type(symbs),
             Expr::Member { expr, name } => todo!(),
+            // TODO: This one is kiiiinda tricky...
+            //   Implicit ret??? Separate ret for ifs??? 
             Expr::If {
                 iff,
                 elseifs,
                 elsee,
-            } => todo!(),
+            } => Ok(SymbolType::Void)
         }
     }
 }
 
 pub fn semantic_analysis(f: &mut File) -> Vec<SemanticError> {
     let mut table = SymbolTable::new();
+
+    table.add(Symbol { 
+        name: "printf".to_string(), 
+        typ: SymbolType::Function { 
+            args: vec![ Box::new(SymbolType::Pointer(Box::new(SymbolType::Char))), 
+                        Box::new(SymbolType::Variadic)], 
+            ret: Box::new(SymbolType::Integer) 
+        }  
+    });
+    
     let mut errs: Vec<SemanticError> = vec![];
     for stmt in f.stmts.iter_mut() {
         if let Err(mut es) = stmt.analyze(&mut table) {

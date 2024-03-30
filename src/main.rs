@@ -6,6 +6,8 @@ use chumsky::{
 use lexer::Token;
 use logos::Logos;
 
+use crate::codegen::codegen;
+
 mod codegen;
 mod lexer;
 mod parser;
@@ -21,8 +23,8 @@ fn main() {
 
     let token_stream = Stream::from_iter(token_iter).spanned((src.len()..src.len()).into());
     let parse = parser::parser().parse(token_stream);
-    let (ok, errs) = parse.into_output_errors();
-    println!("{:#?}", ok);
+    let (ast, errs) = parse.into_output_errors();
+    println!("{:#?}", ast);
     for err in errs {
         Report::build(ReportKind::Error, (), err.span().start)
             .with_code(3)
@@ -35,5 +37,8 @@ fn main() {
             .finish()
             .eprint(Source::from(src))
             .unwrap();
+    }
+    if let Some(ast) = ast {
+        codegen(ast);
     }
 }
